@@ -1,0 +1,9 @@
+# Keep the deployed site lean — these are project docs/setup, not part of the app.
+README.md
+supabase
+.git
+.DS_Store
+
+# Never ship secrets
+.env
+.env.*

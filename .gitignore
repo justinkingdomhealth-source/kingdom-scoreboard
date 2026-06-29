@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Vercel
+.vercel
+
+# Editor / OS noise
+*.log
+Thumbs.db
+
+# Local env — tokens for redeploy live here (config.js holds only public keys)
+.env
+.env.local
