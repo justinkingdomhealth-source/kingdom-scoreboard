@@ -95,7 +95,10 @@ async function publishToTeam(){
 // just render what's there.
 async function initFromDrive(){
   const cached=(()=>{try{const s=localStorage.getItem(LOCAL_KEY);if(s){const p=JSON.parse(s);if(p.members?.length)return p;}}catch(e){}return null;})();
-  if(cached){db=cached;}
+  // cloud.js may have seeded localStorage from the shared cloud row before we
+  // loaded — that data is untrusted, so it goes through cleanBoard like any
+  // other cloud input. (Purely-local data passes through unchanged.)
+  if(cached){db=cleanBoard(cached)||db;}
   render();
   if(!(window.cowork&&window.cowork.callMcpTool))return; // web: cloud.js already synced
   try{
@@ -106,10 +109,67 @@ async function initFromDrive(){
       const r2=await window.cowork.callMcpTool(`${DRIVE}__download_file_content`,{fileId:files[0].id});
       const d2=r2.structuredContent??JSON.parse(r2.content[0].text);
       const raw=d2.content||d2.base64Content||d2.fileContent||d2.data;
-      if(raw){const parsed=JSON.parse(atob(raw));if(parsed.members?.length){db=parsed;try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}catch(e){}render();}}
+      if(raw){const cb=cleanBoard(JSON.parse(atob(raw)));if(cb){db=cb;try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}catch(e){}render();}}
     }
   }catch(e){/* use cached/seed */}
 }
+
+// ── CLOUD DATA HYGIENE ──
+// The shared cloud row is writable by anyone with the site URL (that's the
+// tradeoff for a no-login team board), so anything coming FROM the cloud is
+// untrusted: rebuild it field-by-field, strip markup from strings, whitelist
+// ids, and coerce numbers. Returns null if the blob isn't a plausible board.
+function cleanBoard(data){
+  try{
+    if(!data||typeof data!=='object'||!Array.isArray(data.members))return null;
+    const str=v=>String(v==null?'':v).replace(/[<>]/g,'').slice(0,120);
+    const num=v=>{const n=Number(v);return isFinite(n)&&n>=0?Math.round(n):0;};
+    const cnt=o=>({medicare:num(o&&o.medicare),ancillary:num(o&&o.ancillary),life:num(o&&o.life),uhc:num(o&&o.uhc)});
+    const out={members:[],scores:{},running:{},champs:{},history:[],pw:String(data.pw||'king1').slice(0,64),updated:str(data.updated)};
+    data.members.slice(0,200).forEach((m,i)=>{
+      if(!m||typeof m!=='object')return;
+      let id=String(m.id||'');if(!/^[\w-]{1,40}$/.test(id))id='fx'+i;
+      const d=Number(m.division);
+      out.members.push({id,name:str(m.name)||('Member '+(i+1)),emoji:str(m.emoji)||'⭐',division:d>=1&&d<=3?Math.round(d):3,inactive:!!m.inactive,hiddenFromBoard:!!m.hiddenFromBoard});
+      out.scores[id]=cnt(data.scores&&data.scores[m.id]);
+      out.running[id]=cnt(data.running&&data.running[m.id]);
+      const c=(data.champs&&data.champs[m.id])||{};out.champs[id]={div1:num(c.div1),div2:num(c.div2),div3:num(c.div3)};
+    });
+    if(!out.members.length)return null;
+    if(Array.isArray(data.history))out.history=data.history.slice(0,240).map(h=>({
+      month:str(h&&h.month),d1:str(h&&h.d1),d2:str(h&&h.d2),d3:str(h&&h.d3),
+      d1emoji:str(h&&h.d1emoji),d2emoji:str(h&&h.d2emoji),d3emoji:str(h&&h.d3emoji),
+      up:Array.isArray(h&&h.up)?h.up.slice(0,20).map(x=>({name:str(x&&x.name),emoji:str(x&&x.emoji),from:num(x&&x.from),to:num(x&&x.to)})):[],
+      dn:Array.isArray(h&&h.dn)?h.dn.slice(0,20).map(x=>({name:str(x&&x.name),emoji:str(x&&x.emoji),from:num(x&&x.from),to:num(x&&x.to)})):[],
+      snapshot:(h&&h.snapshot&&typeof h.snapshot==='object')?Object.fromEntries(Object.entries(h.snapshot).slice(0,200).map(([k,s])=>[str(k),{name:str(s&&s.name),emoji:str(s&&s.emoji),division:num(s&&s.division),medicare:num(s&&s.medicare),ancillary:num(s&&s.ancillary),life:num(s&&s.life),uhc:num(s&&s.uhc),total:num(s&&s.total)}])):{}
+    }));
+    return out;
+  }catch(e){return null;}
+}
+
+// ── LIVE UPDATES (web) ──
+// lib/cloud.js calls this whenever the shared board changes in the cloud
+// (another device saved). We sanitize, make sure it's strictly NEWER than what
+// we're showing (a stale echo must never revert local edits), wait out any
+// open edit modal, then swap it in and re-render on the spot.
+function editModalOpen(){return ['adminOvr','pasteOvr','cmOvr'].some(id=>{const el=document.getElementById(id);return el&&!el.classList.contains('hidden');});}
+window.applyCloudData=function(data){
+  const clean=cleanBoard(data);
+  if(!clean)return;
+  if(db&&db.updated){
+    const a=Date.parse(clean.updated),b=Date.parse(db.updated);
+    if(!(a>b))return; // only strictly-newer versions may replace what we show
+  }
+  if(editModalOpen()){ // don't yank data out from under an admin mid-edit
+    window.__pendingCloud=clean;
+    clearTimeout(window.__cloudRetry);
+    window.__cloudRetry=setTimeout(()=>{const p=window.__pendingCloud;window.__pendingCloud=null;if(p)window.applyCloudData(p);},1500);
+    return;
+  }
+  db=clean;
+  try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}catch(e){}
+  render();
+};
 function monthTotal(id){const s=db.scores[id]||{};return(s.medicare||0)+(s.ancillary||0)+(s.life||0);}
 function runningTotal(id){const r=db.running?.[id]||{};return(r.medicare||0)+(r.ancillary||0)+(r.life||0);}
 function pScore(id,p){return(db.scores[id]||{})[p]||0;}

@@ -8,10 +8,14 @@
 -- table that holds the whole board as one JSON document. The anon (publishable)
 -- key can read and write it, which is what makes the board live for the whole team.
 --
--- Security note: this is intentionally simple for a small internal sales board —
--- edits in the app are already gated behind the admin password, and the data is
--- low-stakes (deal counts, not PII). If you ever want hard server-side protection
--- (only admins can write), add Clerk/Supabase auth and tighten the write policy.
+-- Security note: this is intentionally simple for a small internal sales board.
+-- The admin password only gates the APP's edit screens — at the database level,
+-- anyone who has the site URL could technically write this row. That's an
+-- accepted tradeoff: the data is low-stakes (deal counts, not PII), the app
+-- sanitizes everything it reads from this row (see cleanBoard in app.js), and
+-- the URL is only shared with the team. If you ever want hard server-side
+-- protection (only admins can write), add Clerk/Supabase auth and tighten the
+-- write policy.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 create table if not exists public.board_state (
@@ -31,3 +35,12 @@ create policy "team can read board" on public.board_state
 drop policy if exists "team can write board" on public.board_state;
 create policy "team can write board" on public.board_state
   for all to anon using (true) with check (true);
+
+-- Live updates: publish row changes so every open phone re-renders the moment
+-- an admin saves. (Wrapped so re-running this script doesn't error.)
+do $$
+begin
+  alter publication supabase_realtime add table public.board_state;
+exception
+  when duplicate_object then null;
+end $$;
