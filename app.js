@@ -15,30 +15,30 @@ const SEED={
     {id:'m12',name:'Jessica Wilson', emoji:'💅',   division:3},
   ],
   scores:{
-    m1:{medicare:36,ancillary:1,life:0,uhc:0},
-    m2:{medicare:27,ancillary:10,life:2,uhc:0},
-    m3:{medicare:23,ancillary:2,life:0,uhc:0},
-    m4:{medicare:19,ancillary:7,life:3,uhc:0},
-    m5:{medicare:15,ancillary:0,life:7,uhc:0},
-    m6:{medicare:13,ancillary:0,life:0,uhc:0},
-    m7:{medicare:13,ancillary:1,life:0,uhc:0},
-    m8:{medicare:6,ancillary:1,life:0,uhc:0},
-    m9:{medicare:7,ancillary:0,life:0,uhc:0},
-    m10:{medicare:4,ancillary:0,life:0,uhc:0},
-    m11:{medicare:2,ancillary:1,life:0,uhc:0},
+    m1:{medicare:0,ancillary:0,life:0,uhc:0},
+    m2:{medicare:0,ancillary:0,life:0,uhc:0},
+    m3:{medicare:0,ancillary:0,life:0,uhc:0},
+    m4:{medicare:0,ancillary:0,life:0,uhc:0},
+    m5:{medicare:0,ancillary:0,life:0,uhc:0},
+    m6:{medicare:0,ancillary:0,life:0,uhc:0},
+    m7:{medicare:0,ancillary:0,life:0,uhc:0},
+    m8:{medicare:0,ancillary:0,life:0,uhc:0},
+    m9:{medicare:0,ancillary:0,life:0,uhc:0},
+    m10:{medicare:0,ancillary:0,life:0,uhc:0},
+    m11:{medicare:0,ancillary:0,life:0,uhc:0},
     m12:{medicare:0,ancillary:0,life:0,uhc:0},
   },
   running:{
-    m1:{medicare:261,ancillary:0,life:0},
-    m2:{medicare:162,ancillary:0,life:0},
-    m3:{medicare:237,ancillary:0,life:0},
-    m4:{medicare:242,ancillary:0,life:0},
+    m1:{medicare:0,ancillary:0,life:0},
+    m2:{medicare:0,ancillary:0,life:0},
+    m3:{medicare:0,ancillary:0,life:0},
+    m4:{medicare:0,ancillary:0,life:0},
     m5:{medicare:0,ancillary:0,life:0},
     m6:{medicare:0,ancillary:0,life:0},
-    m7:{medicare:82,ancillary:0,life:0},
-    m8:{medicare:165,ancillary:0,life:0},
+    m7:{medicare:0,ancillary:0,life:0},
+    m8:{medicare:0,ancillary:0,life:0},
     m9:{medicare:0,ancillary:0,life:0},
-    m10:{medicare:4,ancillary:0,life:0},
+    m10:{medicare:0,ancillary:0,life:0},
     m11:{medicare:0,ancillary:0,life:0},
     m12:{medicare:0,ancillary:0,life:0}},
   champs:{},history:[],pw:'king1',
@@ -48,7 +48,7 @@ const SEED={
 const PRODS=[{key:'medicare',label:'Medicare'},{key:'ancillary',label:'Ancillary'},{key:'life',label:'Life Ins.'}];
 const CAT_MAP=[{words:['medicare'],key:'medicare'},{words:['ancillary'],key:'ancillary'},{words:['life'],key:'life'}];
 const DRIVE='mcp__e2e0a882-ce76-4636-b5f7-199957a698c8';
-const LOCAL_KEY='khg_v12';
+const LOCAL_KEY='khg_v13';
 
 let db=(()=>{try{const s=localStorage.getItem(LOCAL_KEY);if(s){const p=JSON.parse(s);if(p.members?.length)return p;}}catch(e){}return JSON.parse(JSON.stringify(SEED));})();
 let curView='total',pendingAction=null,parsedScores=null;
@@ -484,7 +484,10 @@ function addMember(){
   if(!db.running)db.running={};
   db.running[id]={medicare:0,ancillary:0,life:0,uhc:0};
   save();
-  document.getElementById('nName').value='';document.getElementById('nEmoji').value='';
+  document.getElementById('nName').value='';
+  document.getElementById('nEmoji').value='⭐';
+  document.getElementById('emojiBtn').textContent='⭐';
+  document.querySelectorAll('.epick').forEach(el=>el.classList.remove('epick-selected'));
   msg.className='msg ok';msg.textContent=`✓ ${emoji} ${name} added!`;
   setTimeout(()=>msg.textContent='',2500);
   renderAList();render();
@@ -519,5 +522,45 @@ function changePw(){
   if(pw.length<4){msg.className='msg er';msg.textContent='Min 4 characters.';return;}
   db.pw=pw;save();document.getElementById('nPw').value='';msg.className='msg ok';msg.textContent='Updated!';setTimeout(()=>msg.textContent='',2500);
 }
+
+// ══════════════════ EMOJI PICKER ══════════════════
+const EMOJI_LIST=[
+  '⭐','🔥','💪','🏆','🎯','💰','👑','🚀','💎','⚡',
+  '🌟','🎉','🏅','🎖️','🥇','💥','🎪','🌈','🦁','🐉',
+  '🚴🏻‍♂️','🩸','🎣','🙏🏻','🌹','🌎','🧊','🔮','🎀','🍊',
+  '🎰','💅','🌊','🎸','🦅','🐺','🏋️','🤝','💡','🎲',
+  '🌙','☀️','❄️','🌴','🎭','🦊','🐯','🦋','🌺','🍀',
+  '🎵','🎤','📊','💼','🏠','🚗','✈️','🎓','🏄','🤙',
+  '👊','✌️','🤞','👆','🙌','💯','🆙','🔑','🛡️','⚔️',
+  '🍕','☕','🎂','🍎','🦊','🐻','🦁','🐧','🦜','🐬'
+];
+
+function buildEmojiPicker(){
+  const el=document.getElementById('emojiPicker');
+  if(el.children.length)return;
+  el.innerHTML=EMOJI_LIST.map(e=>`<span class="epick" onclick="selectEmoji('${e}')">${e}</span>`).join('');
+}
+
+function toggleEmojiPicker(){
+  buildEmojiPicker();
+  const el=document.getElementById('emojiPicker');
+  el.classList.toggle('open');
+}
+
+function selectEmoji(e){
+  document.getElementById('nEmoji').value=e;
+  document.getElementById('emojiBtn').textContent=e;
+  document.querySelectorAll('.epick').forEach(el=>el.classList.remove('epick-selected'));
+  const picked=[...document.querySelectorAll('.epick')].find(el=>el.textContent===e);
+  if(picked)picked.classList.add('epick-selected');
+  document.getElementById('emojiPicker').classList.remove('open');
+}
+
+// Close emoji picker when clicking outside
+document.addEventListener('click',function(e){
+  const picker=document.getElementById('emojiPicker');
+  const btn=document.getElementById('emojiBtn');
+  if(picker&&btn&&!picker.contains(e.target)&&e.target!==btn){picker.classList.remove('open');}
+});
 
 initFromDrive();

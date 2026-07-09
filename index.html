@@ -548,6 +548,14 @@ select.inp{cursor:pointer}
   .anim{animation-duration:.01s}
   *,*::before,*::after{transition-duration:.01s !important}
 }
+
+/* EMOJI PICKER (royal skin) */
+/* EMOJI PICKER */
+.emoji-picker{background:linear-gradient(180deg,#111634,#0a0f24);border:1px solid rgba(212,175,55,.36);border-radius:14px;box-shadow:inset 0 1px 0 rgba(247,233,142,.12);padding:10px;display:none;flex-wrap:wrap;gap:4px;max-width:320px;max-height:200px;overflow-y:auto;margin-top:6px}
+.emoji-picker.open{display:flex}
+.epick{font-size:22px;cursor:pointer;padding:4px;border-radius:8px;transition:background .15s;line-height:1}
+.epick:hover{background:rgba(212,175,55,.2)}
+.epick-selected{background:rgba(212,175,55,.3);outline:2px solid rgba(212,175,55,.6)}
 </style>
 </head>
 <body>
@@ -681,9 +689,12 @@ select.inp{cursor:pointer}
   <div class="modal">
     <div class="mtitle">⚙️ Manage Team</div>
     <div class="shd">Add Team Member</div>
-    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px">
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px;align-items:center">
       <input type="text" class="inp" id="nName" placeholder="Full name" style="flex:2;min-width:130px"/>
-      <input type="text" class="inp" id="nEmoji" placeholder="Emoji" style="flex:0 0 68px"/>
+      <div style="position:relative;flex:0 0 auto">
+        <button type="button" class="inp" id="emojiBtn" onclick="toggleEmojiPicker()" style="width:68px;cursor:pointer;text-align:center;font-size:22px;padding:6px 8px;line-height:1" title="Pick an emoji">⭐</button>
+        <input type="hidden" id="nEmoji" value="⭐"/>
+      </div>
       <select class="inp" id="nDiv" style="flex:0 0 106px">
         <option value="3">Division 3</option>
         <option value="2">Division 2</option>
@@ -691,6 +702,7 @@ select.inp{cursor:pointer}
       </select>
       <button class="btn bgold bsm" onclick="addMember()">Add</button>
     </div>
+    <div class="emoji-picker" id="emojiPicker"></div>
     <div class="msg" id="addMsg"></div>
     <hr class="divider"/>
     <div class="shd">Team Members &amp; Scores</div>
@@ -709,7 +721,6 @@ select.inp{cursor:pointer}
     <div class="msg" id="pwChMsg"></div>
   </div>
 </div>
-
 <!-- Public config: Supabase keys (safe to expose to the browser). Empty = local-only. -->
 <script src="config.js"></script>
 <!-- Cloud bootstrap: pulls the shared team board from Supabase (if configured), then loads app.js -->
