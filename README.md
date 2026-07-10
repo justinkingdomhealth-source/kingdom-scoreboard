@@ -35,7 +35,7 @@ Built as a **buildless static site** (no Node build step) — just `index.html`,
 4. Paste both into `config.js`, commit, and redeploy.
 
 Admin actions (paste scores, manage team, close month, change password) are gated
-behind the in-app **admin password** (default `king1` — change it under ⚙️ Manage Team).
+behind the in-app **admin password** (ask Justin — changeable under ⚙️ Manage Team).
 
 ## Redeploy
 

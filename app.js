@@ -41,7 +41,7 @@ const SEED={
     m10:{medicare:0,ancillary:0,life:0},
     m11:{medicare:0,ancillary:0,life:0},
     m12:{medicare:0,ancillary:0,life:0}},
-  champs:{},history:[],pw:'king1',
+  champs:{},history:[],pw:'Leo',
   updated:new Date().toISOString()
 };
 
