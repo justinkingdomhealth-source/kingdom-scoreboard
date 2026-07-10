@@ -14,6 +14,6 @@
 //   4. Paste them below, commit, and redeploy. Done.
 // ─────────────────────────────────────────────────────────────────────────────
 window.APP_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: ""
+  SUPABASE_URL: "https://hkddwywcctifpfhryzwf.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_0ehzVcZRDt4GiUPuNZo9Vg_3DMNJ-fE"
 };
