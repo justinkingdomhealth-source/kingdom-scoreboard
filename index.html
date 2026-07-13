@@ -625,6 +625,14 @@ select.inp{cursor:pointer}
 .log-recent{margin-top:10px}
 .log-recent-item{font-size:12.5px;color:#9ca3af;padding:6px 2px;border-top:1px solid rgba(255,255,255,.05);display:flex;align-items:center;gap:6px}
 @media (prefers-reduced-motion:reduce){.abtn-logsale{animation:none}}
+
+/* ═══════════════ 👑 KHG HEADLINE STATS ═══════════════ */
+.khg-stats{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 auto 20px;max-width:520px;padding:14px 16px;border-radius:18px;border:1px solid rgba(212,175,55,.32);background:radial-gradient(ellipse 120% 130% at 50% -20%,rgba(212,175,55,.16),transparent 62%),linear-gradient(180deg,rgba(27,21,60,.7),rgba(10,14,34,.5));box-shadow:inset 0 1px 0 rgba(247,233,142,.16),0 18px 40px -28px rgba(0,0,0,.9)}
+.khg-stat{flex:1;text-align:center;min-width:0}
+.khg-stat-num{font-family:var(--serif,'Cinzel',serif);font-size:30px;font-weight:900;line-height:1;background:linear-gradient(135deg,#f7e98e,#d4af37 55%,#b8941f);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-shadow:0 0 18px rgba(212,175,55,.28)}
+.khg-stat-lbl{font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-top:5px}
+.khg-crest{font-size:26px;line-height:1;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(212,175,55,.5));padding:0 4px}
+@media (max-width:460px){.khg-stat-num{font-size:25px}.khg-crest{font-size:22px}}
 </style>
 </head>
 <body>
@@ -655,6 +663,12 @@ select.inp{cursor:pointer}
   </div>
 
   <div class="month-badge"><span class="month-pill" id="monthBadge"></span></div>
+
+  <div class="khg-stats">
+    <div class="khg-stat"><div class="khg-stat-num" id="khgAnnual">0</div><div class="khg-stat-lbl">Deals in <span id="khgYear"></span></div></div>
+    <div class="khg-crest">👑</div>
+    <div class="khg-stat"><div class="khg-stat-num" id="khgLifetime">0</div><div class="khg-stat-lbl">Lifetime Deals</div></div>
+  </div>
 
   <div class="tabs">
     <button class="tab active" data-view="total"     onclick="setTab(this)">🏆 This Month</button>

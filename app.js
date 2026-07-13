@@ -222,6 +222,13 @@ function repYear(id){
   (db.history||[]).forEach(h=>{if(histYear(h)===y&&h.snapshot&&h.snapshot[id])t+=h.snapshot[id].total||0;});
   return t;
 }
+// Every deal the whole team has ever booked = all-time running totals + the open month.
+function lifetimeDeals(){return db.members.reduce((t,m)=>t+runningTotal(m.id),0)+teamMonthTotal();}
+function renderKHGStats(){
+  const a=document.getElementById('khgAnnual');if(a)a.textContent=yearDeals();
+  const l=document.getElementById('khgLifetime');if(l)l.textContent=lifetimeDeals();
+  const y=document.getElementById('khgYear');if(y)y.textContent=new Date().getFullYear();
+}
 
 function defaultRecords(){return{
   repDay:{count:0,id:'',name:'',emoji:'',date:''},
@@ -378,7 +385,7 @@ function setTab(btn){
 }
 
 // ── RENDER ──
-function render(){renderMovers();renderTotal();PRODS.forEach(p=>renderProd(p.key));renderAllTime();renderRecords();renderLastUp();}
+function render(){renderKHGStats();renderMovers();renderTotal();PRODS.forEach(p=>renderProd(p.key));renderAllTime();renderRecords();renderLastUp();}
 
 function divM(div){return db.members.filter(m=>m.division==div && !m.inactive && !m.hiddenFromBoard).sort((a,b)=>monthTotal(b.id)-monthTotal(a.id));}
 
