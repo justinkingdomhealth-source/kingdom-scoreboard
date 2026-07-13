@@ -161,6 +161,20 @@ function cleanBoard(data){
       const totObj=o=>{const r={};if(o&&typeof o==='object')Object.entries(o).slice(0,300).forEach(([k,v])=>{r[str(k)]=num(v);});return r;};
       out.daily={day:str(data.daily.day),month:str(data.daily.month),startTotals:totObj(data.daily.startTotals),startTeam:num(data.daily.startTeam),lastTotals:totObj(data.daily.lastTotals),lastTeam:num(data.daily.lastTeam)};
     }
+    // deal ledger — client details are ENCRYPTED blobs; sanitize charset but DON'T truncate ciphertext
+    const b64s=v=>String(v==null?'':v).replace(/[^A-Za-z0-9+/=_-]/g,'').slice(0,4000);
+    const money=v=>{const n=Number(v);return isFinite(n)&&n>=0?Math.round(n*100)/100:0;};
+    if(Array.isArray(data.deals))out.deals=data.deals.slice(0,6000).map(d=>{
+      if(!d||typeof d!=='object')return null;
+      const e=(d.enc&&typeof d.enc==='object')?d.enc:{},ee=(e.e&&typeof e.e==='object')?e.e:{};
+      return {id:str(d.id),agentId:str(d.agentId),product:['ancillary','life','medicare'].includes(d.product)?d.product:'other',date:str(d.date),
+        enc:{e:{x:b64s(ee.x),y:b64s(ee.y)},iv:b64s(e.iv),ct:b64s(e.ct)}};
+    }).filter(Boolean);
+    if(data.premiums&&typeof data.premiums==='object'){
+      out.premiums={};Object.entries(data.premiums).slice(0,20).forEach(([y,v])=>{
+        if(v&&typeof v==='object')out.premiums[String(y).replace(/[^0-9]/g,'').slice(0,4)]={ancillary:money(v.ancillary),life:money(v.life)};
+      });
+    }
     return out;
   }catch(e){return null;}
 }
@@ -187,6 +201,8 @@ window.applyCloudData=function(data){
   // Never let a records-less payload (e.g. a device that booted on seed after a failed
   // cloud pull, then published) wipe an already-established record book / streaks.
   if(recordsPopulated(db.records)&&!recordsPopulated(clean.records)){clean.records=db.records;clean.daily=db.daily;}
+  if(db.deals&&db.deals.length&&!(clean.deals&&clean.deals.length))clean.deals=db.deals;   // never let a stale device wipe the ledger
+  if(db.premiums&&!clean.premiums)clean.premiums=db.premiums;
   const before=hypeSnapshot(db);
   db=clean;
   try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}catch(e){}
@@ -492,6 +508,16 @@ function renderRecords(){
     if(!hot.length)sEl.innerHTML='<div class="streak-empty">🔥 No streaks going yet — book a deal today to light one up.</div>';
     else sEl.innerHTML=hot.map(x=>`<div class="streak-row"><div class="lb-emoji">${x.m.emoji}</div><div style="flex:1;min-width:0"><div class="lb-name">${x.m.name}</div><div class="streak-best">best run: ${x.best} day${x.best===1?'':'s'}</div></div><div class="streak-flames">${x.cur>0?'🔥'.repeat(Math.min(x.cur,5)):''}</div><div class="streak-count ${x.cur>0?'':'zero-score'}">${x.cur}<span class="streak-unit">day${x.cur===1?'':'s'} 🔥</span></div></div>`).join('');
   }
+  renderPremium();
+}
+function fmtMoney(n){return '$'+Math.round(n||0).toLocaleString();}
+function renderPremium(){
+  const el=document.getElementById('prem-grid');if(!el)return;
+  const anc=premiumYTD('ancillary'),life=premiumYTD('life'),total=anc+life;
+  el.innerHTML=
+    `<div class="prem-card"><div class="prem-lbl">➕ Ancillary</div><div class="prem-num">${fmtMoney(anc)}</div></div>`+
+    `<div class="prem-card"><div class="prem-lbl">🌿 Life</div><div class="prem-num">${fmtMoney(life)}</div></div>`+
+    `<div class="prem-card prem-total"><div class="prem-lbl">Total ${new Date().getFullYear()}</div><div class="prem-num">${fmtMoney(total)}</div></div>`;
 }
 
 function renderLastUp(){const el=document.getElementById('lastup');if(db.updated){const d=new Date(db.updated);el.textContent=`Updated ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} at ${d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`;}else el.textContent='';}
@@ -559,48 +585,171 @@ function applyPaste(){
   celebrateHype(detectHype(before,hypeSnapshot(db)));
 }
 
-// ══════════════════ ➕ LOG A SALE (self-serve, real-time) ══════════════════
-// No admin password — any rep taps their name (remembered on their phone) and a
-// product to log +1. Reuses the exact save/records/hype pipeline, so it syncs live
-// to everyone and fires records/streaks/confetti just like a paste would.
+// ══════════════════ ➕ LOG A SALE + PRIVATE DEAL LEDGER ══════════════════
+// Medicare = quick +1. Ancillary/Life = a deal with client/carrier/effective/annual
+// premium: the COUNT and the premium TOTAL go on the public board (safe, no PII), but
+// the client DETAILS are ENCRYPTED to the admin's key — only the admin login can read
+// them (see the ledger in Manage Team). Client names never sit in the open.
 const ME_KEY='khg_me';
-let _lastSale=null;
+const LEDGER_D_LS='khg_ledger_d';   // admin private scalar, remembered on this device
+const LEDGER_PUB={x:"IQXskBHCZMCyHi-M9pPKya242rJzJyjHy_yQGpeayMc",y:"w4xD3t31owr5btJs3aGuQx_k9acvLFGI3GrawFpNDdM"};
+let _lastSale=null,_dealProduct=null;
+
+// ── client-side encryption (ECDH P-256 → AES-GCM; only the admin's private key decrypts) ──
+const _b64=b=>btoa(String.fromCharCode.apply(null,new Uint8Array(b)));
+const _u8=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function ledgerEncrypt(detail){
+  const pub=await crypto.subtle.importKey('jwk',{kty:'EC',crv:'P-256',x:LEDGER_PUB.x,y:LEDGER_PUB.y},{name:'ECDH',namedCurve:'P-256'},false,[]);
+  const eph=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveKey']);
+  const aes=await crypto.subtle.deriveKey({name:'ECDH',public:pub},eph.privateKey,{name:'AES-GCM',length:256},false,['encrypt']);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},aes,new TextEncoder().encode(JSON.stringify(detail)));
+  const ep=await crypto.subtle.exportKey('jwk',eph.publicKey);
+  return {e:{x:ep.x,y:ep.y},iv:_b64(iv),ct:_b64(ct)};
+}
+async function ledgerDecrypt(blob,d){
+  const priv=await crypto.subtle.importKey('jwk',{kty:'EC',crv:'P-256',d:d,x:LEDGER_PUB.x,y:LEDGER_PUB.y},{name:'ECDH',namedCurve:'P-256'},false,['deriveKey']);
+  const ep=await crypto.subtle.importKey('jwk',{kty:'EC',crv:'P-256',x:blob.e.x,y:blob.e.y},{name:'ECDH',namedCurve:'P-256'},false,[]);
+  const aes=await crypto.subtle.deriveKey({name:'ECDH',public:ep},priv,{name:'AES-GCM',length:256},false,['decrypt']);
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:_u8(blob.iv)},aes,_u8(blob.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+// ── premium aggregates (public, no PII) ──
+function curYear(){return String(new Date().getFullYear());}
+function addPremium(product,amt){if(!db.premiums)db.premiums={};const y=curYear();if(!db.premiums[y])db.premiums[y]={ancillary:0,life:0};db.premiums[y][product]=Math.max(0,(db.premiums[y][product]||0)+amt);}
+function premiumYTD(product){const y=curYear();return(db.premiums&&db.premiums[y]&&db.premiums[y][product])||0;}
+
 function saleMembers(){return db.members.filter(m=>!m.inactive&&!m.hiddenFromBoard).sort((a,b)=>a.division-b.division||a.name.localeCompare(b.name));}
+function currentRep(){const sel=document.getElementById('logRep'),id=sel&&sel.value;return db.members.find(x=>x.id===id)||null;}
 function openLogSale(){
   const sel=document.getElementById('logRep'),me=localStorage.getItem(ME_KEY)||'',list=saleMembers();
   sel.innerHTML=list.map(m=>`<option value="${m.id}"${m.id===me?' selected':''}>${m.emoji} ${m.name}</option>`).join('');
   const msg=document.getElementById('logMsg');
   if(!list.length){msg.className='msg er';msg.textContent='Add team members first (⚙️ Manage Team).';}else{msg.textContent='';}
-  document.getElementById('logRecent').innerHTML='';_lastSale=null;
+  document.getElementById('logRecent').innerHTML='';_lastSale=null;hideDealForm();
   document.getElementById('logOvr').classList.remove('hidden');
 }
 function closeLogSale(){document.getElementById('logOvr').classList.add('hidden');}
 function rememberLogRep(){const v=document.getElementById('logRep').value;if(v)localStorage.setItem(ME_KEY,v);}
-function logSale(product){
-  const sel=document.getElementById('logRep'),id=sel&&sel.value,m=db.members.find(x=>x.id===id);
-  const msg=document.getElementById('logMsg');
-  if(!m){msg.className='msg er';msg.textContent='Pick who made the sale first.';return;}
-  localStorage.setItem(ME_KEY,id);
-  const before=hypeSnapshot(db);
-  if(!db.scores[id])db.scores[id]={medicare:0,ancillary:0,life:0,uhc:0};
-  db.scores[id][product]=(db.scores[id][product]||0)+1;
-  _lastSale={id,product};
+
+function applyCount(m,product){if(!db.scores[m.id])db.scores[m.id]={medicare:0,ancillary:0,life:0,uhc:0};db.scores[m.id][product]=(db.scores[m.id][product]||0)+1;}
+function finishLog(before,m,product,extra){
   updateRecords();db.updated=new Date().toISOString();save();render();
   celebrateHype(detectHype(before,hypeSnapshot(db)));
   const label=(PRODS.find(p=>p.key===product)||{}).label||product;
-  msg.className='msg ok';
-  msg.innerHTML=`✅ ${m.emoji} <strong>${m.name}</strong> +1 ${label} · now <strong>${monthTotal(id)}</strong> this month &nbsp;<a onclick="undoLastSale()" style="color:#f87171;cursor:pointer;text-decoration:underline">undo</a>`;
+  const msg=document.getElementById('logMsg');msg.className='msg ok';
+  msg.innerHTML=`✅ ${m.emoji} <strong>${m.name}</strong> +1 ${label}${extra||''} &nbsp;<a onclick="undoLastSale()" style="color:#f87171;cursor:pointer;text-decoration:underline">undo</a>`;
   const rec=document.getElementById('logRecent');
-  if(rec)rec.insertAdjacentHTML('afterbegin',`<div class="log-recent-item">${m.emoji} ${m.name} · +1 ${label}</div>`);
+  if(rec)rec.insertAdjacentHTML('afterbegin',`<div class="log-recent-item">${m.emoji} ${m.name} · +1 ${label}${extra||''}</div>`);
+}
+
+// Medicare — instant +1, no details.
+function logSale(product){
+  const m=currentRep(),msg=document.getElementById('logMsg');
+  if(!m){msg.className='msg er';msg.textContent='Pick who made the sale first.';return;}
+  localStorage.setItem(ME_KEY,m.id);
+  const before=hypeSnapshot(db);
+  applyCount(m,product);
+  _lastSale={id:m.id,product,premium:0,dealId:null};
+  finishLog(before,m,product,'');
+}
+// Ancillary / Life — reveal the deal form (client / carrier / effective / annual premium).
+function selectDealProduct(product){
+  const m=currentRep(),msg=document.getElementById('logMsg');
+  if(!m){msg.className='msg er';msg.textContent='Pick who made the sale first.';return;}
+  _dealProduct=product;
+  document.getElementById('dealProdLabel').textContent=(PRODS.find(p=>p.key===product)||{}).label||product;
+  ['dClient','dCarrier','dPremium'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('dEffective').value='';
+  document.getElementById('dealForm').style.display='block';
+  setTimeout(()=>document.getElementById('dClient').focus(),40);
+}
+function hideDealForm(){const f=document.getElementById('dealForm');if(f)f.style.display='none';_dealProduct=null;}
+async function submitDeal(){
+  const m=currentRep(),product=_dealProduct,msg=document.getElementById('logMsg');
+  if(!m||!product)return;
+  const client=document.getElementById('dClient').value.trim();
+  const carrier=document.getElementById('dCarrier').value.trim();
+  const effective=document.getElementById('dEffective').value;
+  const premium=Math.max(0,parseFloat(document.getElementById('dPremium').value)||0);
+  if(!client){msg.className='msg er';msg.textContent='Enter the client name.';return;}
+  localStorage.setItem(ME_KEY,m.id);
+  let enc=null;
+  try{enc=await ledgerEncrypt({client,carrier,effective,premium,agentName:m.name,agentEmoji:m.emoji,product});}
+  catch(e){msg.className='msg er';msg.textContent='Could not secure the deal — please try again.';return;}
+  const before=hypeSnapshot(db);
+  const dealId='d'+Date.now()+Math.floor(Math.random()*1000);
+  if(!db.deals)db.deals=[];
+  db.deals.push({id:dealId,agentId:m.id,product,date:todayStr(),enc});
+  addPremium(product,premium);
+  applyCount(m,product);
+  _lastSale={id:m.id,product,premium,dealId};
+  hideDealForm();
+  finishLog(before,m,product,premium?` · $${premium.toLocaleString()} annual`:'');
 }
 function undoLastSale(){
   if(!_lastSale)return;
-  const {id,product}=_lastSale;_lastSale=null;
+  const {id,product,premium,dealId}=_lastSale;_lastSale=null;
   if(db.scores[id])db.scores[id][product]=Math.max(0,(db.scores[id][product]||0)-1);
+  if(premium)addPremium(product,-premium);
+  if(dealId&&db.deals)db.deals=db.deals.filter(d=>d.id!==dealId);
   updateRecords();db.updated=new Date().toISOString();save();render();
   const m=db.members.find(x=>x.id===id),label=(PRODS.find(p=>p.key===product)||{}).label||product;
   const msg=document.getElementById('logMsg');msg.className='msg';
-  msg.innerHTML=`↩ Undone — ${m?m.emoji+' '+m.name:''} ${label} back to <strong>${(db.scores[id]||{})[product]||0}</strong>.`;
+  msg.innerHTML=`↩ Undone — ${m?m.emoji+' '+m.name:''} ${label} removed.`;
+}
+
+// ══════════════════ 📁 ADMIN DEAL LEDGER ══════════════════
+// Decrypted deal details are FREE-FORM rep input, so escape before rendering.
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function unlockLedger(){
+  const v=document.getElementById('ledgerKeyInp').value.trim(),msg=document.getElementById('ledgerKeyMsg');
+  if(!v){msg.className='msg er';msg.textContent='Paste your admin key.';return;}
+  const sample=(db.deals||[]).find(d=>d.enc&&d.product!=='medicare');
+  if(sample){try{await ledgerDecrypt(sample.enc,v);}catch(e){msg.className='msg er';msg.textContent="That key can't open the deals — double-check it.";return;}}
+  localStorage.setItem(LEDGER_D_LS,v);
+  document.getElementById('ledgerKeyInp').value='';msg.textContent='';
+  renderLedger();
+}
+function lockLedger(){localStorage.removeItem(LEDGER_D_LS);renderLedger();}
+async function renderLedger(){
+  const lockedEl=document.getElementById('ledgerLocked'),unlEl=document.getElementById('ledgerUnlocked');
+  if(!lockedEl||!unlEl)return;
+  const key=localStorage.getItem(LEDGER_D_LS)||'';
+  if(!key){lockedEl.style.display='block';unlEl.style.display='none';return;}
+  lockedEl.style.display='none';unlEl.style.display='block';
+  const agSel=document.getElementById('ledgerAgent'),cur=agSel.value;
+  agSel.innerHTML='<option value="">All agents</option>'+db.members.map(m=>`<option value="${m.id}">${esc(m.emoji+' '+m.name)}</option>`).join('');
+  agSel.value=cur;
+  const agentFilter=agSel.value,prodFilter=document.getElementById('ledgerProd').value,listEl=document.getElementById('ledgerList');
+  let deals=(db.deals||[]).filter(d=>d.product!=='medicare');
+  if(agentFilter)deals=deals.filter(d=>d.agentId===agentFilter);
+  if(prodFilter)deals=deals.filter(d=>d.product===prodFilter);
+  deals=deals.slice().reverse();
+  if(!deals.length){listEl.innerHTML='<div style="color:#6b7280;font-size:13px;padding:14px 0;text-align:center">No deals logged yet.</div>';return;}
+  listEl.innerHTML='<div style="color:#6b7280;font-size:12px;padding:8px 0">🔓 Unlocking…</div>';
+  const rows=[];
+  for(const d of deals){
+    let det=null;try{det=await ledgerDecrypt(d.enc,key);}catch(e){det=null;}
+    const m=db.members.find(x=>x.id===d.agentId),who=esc(m?m.emoji+' '+m.name:(det?(det.agentEmoji||'')+' '+(det.agentName||''):'—'));
+    const prodLabel=(PRODS.find(p=>p.key===d.product)||{}).label||d.product;
+    if(!det){rows.push(`<div class="ledger-deal"><div class="ledger-locked">🔒 Couldn't unlock this one (wrong key?) · ${prodLabel} · ${who}</div></div>`);continue;}
+    rows.push(`<div class="ledger-deal"><div class="ledger-top"><div class="ledger-client">${esc(det.client)||'(no name)'}</div><div class="ledger-prem">${det.premium?fmtMoney(det.premium):''}</div></div>`+
+      `<div class="ledger-meta"><span>${prodLabel}</span>${det.carrier?'<span>'+esc(det.carrier)+'</span>':''}${det.effective?'<span>eff '+esc(det.effective)+'</span>':''}<span>${who}</span>`+
+      `<a onclick="deleteDeal('${esc(d.id)}')" style="color:#f87171;cursor:pointer;margin-left:auto">remove</a></div></div>`);
+  }
+  listEl.innerHTML=rows.join('');
+}
+async function deleteDeal(id){
+  const d=(db.deals||[]).find(x=>x.id===id);if(!d)return;
+  if(!confirm('Remove this deal? This also takes its +1 and premium back off the board.'))return;
+  const key=localStorage.getItem(LEDGER_D_LS)||'';let prem=0;
+  try{const det=await ledgerDecrypt(d.enc,key);prem=Math.max(0,Number(det.premium)||0);}catch(e){}
+  db.deals=db.deals.filter(x=>x.id!==id);
+  if(prem)addPremium(d.product,-prem);
+  if(db.scores[d.agentId])db.scores[d.agentId][d.product]=Math.max(0,(db.scores[d.agentId][d.product]||0)-1);
+  db.updated=new Date().toISOString();save();render();renderLedger();
 }
 
 // ══════════════════ CLOSE MONTH ══════════════════
@@ -759,7 +908,7 @@ function closeHD(){document.getElementById('hdOvr').classList.add('hidden');docu
 function openAdmin(){
   ['addMsg','saveMsg','pwChMsg'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='';});
   document.getElementById('nName').value='';document.getElementById('nEmoji').value='';
-  renderAList();document.getElementById('adminOvr').classList.remove('hidden');
+  renderAList();renderLedger();document.getElementById('adminOvr').classList.remove('hidden');
 }
 function closeAdmin(){document.getElementById('adminOvr').classList.add('hidden');}
 
