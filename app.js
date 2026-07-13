@@ -55,7 +55,7 @@ let curView='total',pendingAction=null,parsedScores=null;
 
 function save(){db.updated=new Date().toISOString();try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}catch(e){}}
 let _st=null;
-function debouncedSave(){clearTimeout(_st);_st=setTimeout(()=>{save();render();},500);}
+function debouncedSave(){clearTimeout(_st);_st=setTimeout(()=>{updateRecords();save();render();},500);}
 
 // ── PUBLISH TO TEAM ──
 // Works in three environments, in priority order:
@@ -143,6 +143,24 @@ function cleanBoard(data){
       dn:Array.isArray(h&&h.dn)?h.dn.slice(0,20).map(x=>({name:str(x&&x.name),emoji:str(x&&x.emoji),from:num(x&&x.from),to:num(x&&x.to)})):[],
       snapshot:(h&&h.snapshot&&typeof h.snapshot==='object')?Object.fromEntries(Object.entries(h.snapshot).slice(0,200).map(([k,s])=>[str(k),{name:str(s&&s.name),emoji:str(s&&s.emoji),division:num(s&&s.division),medicare:num(s&&s.medicare),ancillary:num(s&&s.ancillary),life:num(s&&s.life),uhc:num(s&&s.uhc),total:num(s&&s.total)}])):{}
     }));
+    // records + daily baselines (new persistent state — must survive cloud round-trips)
+    const rec=(data.records&&typeof data.records==='object')?data.records:{};
+    const rd=rec.repDay||{},td=rec.teamDay||{},rm=rec.repMonth||{},tm=rec.teamMonth||{};
+    out.records={
+      repDay:{count:num(rd.count),id:str(rd.id),name:str(rd.name),emoji:str(rd.emoji),date:str(rd.date)},
+      teamDay:{count:num(td.count),date:str(td.date)},
+      repMonth:{count:num(rm.count),id:str(rm.id),name:str(rm.name),emoji:str(rm.emoji),month:str(rm.month)},
+      teamMonth:{count:num(tm.count),month:str(tm.month)},
+      perRep:{}
+    };
+    if(rec.perRep&&typeof rec.perRep==='object')Object.entries(rec.perRep).slice(0,300).forEach(([k,v])=>{
+      const bd=(v&&v.bestDay)||{},bm=(v&&v.bestMonth)||{};
+      out.records.perRep[str(k)]={bestDay:{count:num(bd.count),date:str(bd.date)},bestMonth:{count:num(bm.count),month:str(bm.month)}};
+    });
+    if(data.daily&&typeof data.daily==='object'){
+      const totObj=o=>{const r={};if(o&&typeof o==='object')Object.entries(o).slice(0,300).forEach(([k,v])=>{r[str(k)]=num(v);});return r;};
+      out.daily={day:str(data.daily.day),month:str(data.daily.month),startTotals:totObj(data.daily.startTotals),startTeam:num(data.daily.startTeam),lastTotals:totObj(data.daily.lastTotals),lastTeam:num(data.daily.lastTeam)};
+    }
     return out;
   }catch(e){return null;}
 }
@@ -174,6 +192,73 @@ function monthTotal(id){const s=db.scores[id]||{};return(s.medicare||0)+(s.ancil
 function runningTotal(id){const r=db.running?.[id]||{};return(r.medicare||0)+(r.ancillary||0)+(r.life||0);}
 function pScore(id,p){return(db.scores[id]||{})[p]||0;}
 
+// ══════════════════ RECORDS & YEAR TRACKING ══════════════════
+// The board stores absolute MONTH totals (a paste/edit sets "Mike has 12 this
+// month"). So "deals in a day" = today's cumulative − the cumulative at the start
+// of today. bumpDaily() keeps that start-of-day baseline; updateRecords() reads it
+// to keep the all-time record book. Both persist in the cloud row (see cleanBoard).
+function todayStr(){return new Date().toLocaleDateString('en-CA');}                 // YYYY-MM-DD, local
+function monthKey(){return new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});}
+function teamMonthTotal(){return db.members.reduce((t,m)=>t+monthTotal(m.id),0);}
+function histYear(h){return String((h&&h.month)||'').trim().split(/\s+/).pop();}
+
+// Deals booked this calendar year = current open month + every closed month this year.
+function yearDeals(){
+  const y=String(new Date().getFullYear());let t=teamMonthTotal();
+  (db.history||[]).forEach(h=>{if(histYear(h)===y){const s=h.snapshot||{};t+=Object.values(s).reduce((a,x)=>a+(x.total||0),0);}});
+  return t;
+}
+function repYear(id){
+  const y=String(new Date().getFullYear());let t=monthTotal(id);
+  (db.history||[]).forEach(h=>{if(histYear(h)===y&&h.snapshot&&h.snapshot[id])t+=h.snapshot[id].total||0;});
+  return t;
+}
+
+function defaultRecords(){return{
+  repDay:{count:0,id:'',name:'',emoji:'',date:''},
+  teamDay:{count:0,date:''},
+  repMonth:{count:0,id:'',name:'',emoji:'',month:''},
+  teamMonth:{count:0,month:''},
+  perRep:{}
+};}
+
+// Maintain the start-of-today cumulative baseline. Runs AFTER an admin action mutates scores.
+function bumpDaily(){
+  const today=todayStr(),mk=monthKey();
+  const cur={};db.members.forEach(m=>cur[m.id]=monthTotal(m.id));
+  const curTeam=teamMonthTotal();
+  if(!db.daily||db.daily.month!==mk){           // new month (or first run): a month starts at 0 deals,
+    db.daily={day:today,month:mk,startTotals:{},startTeam:0,lastTotals:cur,lastTeam:curTeam};return; // so day-1 delta = the first cumulative entry
+  }
+  if(db.daily.day!==today){                      // new calendar day → yesterday's ending becomes today's baseline
+    db.daily.day=today;
+    db.daily.startTotals=Object.assign({},db.daily.lastTotals);
+    db.daily.startTeam=db.daily.lastTeam;
+  }
+  db.daily.lastTotals=cur;db.daily.lastTeam=curTeam;
+}
+
+// Update the record book from the current board. Called by every admin edit path.
+function updateRecords(){
+  bumpDaily();
+  if(!db.records)db.records=defaultRecords();
+  if(!db.records.perRep)db.records.perRep={};
+  const R=db.records,today=todayStr(),mk=monthKey();
+  db.members.forEach(m=>{
+    const mt=monthTotal(m.id);
+    const dayDelta=Math.max(0,mt-(db.daily.startTotals[m.id]||0));
+    if(dayDelta>R.repDay.count)R.repDay={count:dayDelta,id:m.id,name:m.name,emoji:m.emoji,date:today};   // best day by anyone
+    if(mt>R.repMonth.count)R.repMonth={count:mt,id:m.id,name:m.name,emoji:m.emoji,month:mk};             // best month by anyone
+    const pr=R.perRep[m.id]||(R.perRep[m.id]={bestDay:{count:0,date:''},bestMonth:{count:0,month:''}});  // personal bests
+    if(dayDelta>pr.bestDay.count)pr.bestDay={count:dayDelta,date:today};
+    if(mt>pr.bestMonth.count)pr.bestMonth={count:mt,month:mk};
+  });
+  const teamDay=Math.max(0,teamMonthTotal()-(db.daily.startTeam||0));
+  if(teamDay>R.teamDay.count)R.teamDay={count:teamDay,date:today};
+  const tm=teamMonthTotal();
+  if(tm>R.teamMonth.count)R.teamMonth={count:tm,month:mk};
+}
+
 // ── STARS ──
 (()=>{
   const el=document.getElementById('stars');
@@ -191,7 +276,7 @@ function setTab(btn){
 }
 
 // ── RENDER ──
-function render(){renderTotal();PRODS.forEach(p=>renderProd(p.key));renderAllTime();renderLastUp();}
+function render(){renderTotal();PRODS.forEach(p=>renderProd(p.key));renderAllTime();renderRecords();renderLastUp();}
 
 function divM(div){return db.members.filter(m=>m.division==div && !m.inactive && !m.hiddenFromBoard).sort((a,b)=>monthTotal(b.id)-monthTotal(a.id));}
 
@@ -255,6 +340,43 @@ function renderAllTime(){
 
 function champBadges(ch){const p=[];if(ch?.div1)p.push(`<span class="cbadge cb1">👑×${ch.div1}</span>`);if(ch?.div2)p.push(`<span class="cbadge cb2">🛡️×${ch.div2}</span>`);if(ch?.div3)p.push(`<span class="cbadge cb3">🔥×${ch.div3}</span>`);return p.join('');}
 
+// ══════════════════ RECORDS VIEW ══════════════════
+function fmtRecDate(d){if(!d)return '';const dt=new Date(d+'T00:00:00');return isNaN(dt)?d:dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
+function recCard(icon,label,val,who,sub,cls){
+  return `<div class="rec-card ${cls||''} anim"><div class="rec-ic">${icon}</div>`+
+    `<div class="rec-info"><div class="rec-label">${label}</div>`+
+    (who?`<div class="rec-who">${who}</div>`:'<div class="rec-who rec-none">Not set yet</div>')+
+    `<div class="rec-sub">${sub||''}</div></div>`+
+    `<div class="rec-num ${val>0?'':'zero-score'}">${val||0}<span class="rec-unit">deals</span></div></div>`;
+}
+function renderRecords(){
+  const R=db.records||defaultRecords();const pr=R.perRep||{};
+  const cardsEl=document.getElementById('records-cards');
+  if(cardsEl){
+    cardsEl.innerHTML=
+      recCard('🔥','Most in a Day',R.repDay.count,R.repDay.count?`${R.repDay.emoji||''} ${R.repDay.name||''}`:'',R.repDay.count?fmtRecDate(R.repDay.date):'record up for grabs','rec-gold')+
+      recCard('📅','Most in a Month',R.repMonth.count,R.repMonth.count?`${R.repMonth.emoji||''} ${R.repMonth.name||''}`:'',R.repMonth.count?R.repMonth.month:'record up for grabs','rec-gold')+
+      recCard('👥','Team — Best Day',R.teamDay.count,R.teamDay.count?'Whole team':'',R.teamDay.count?fmtRecDate(R.teamDay.date):'record up for grabs','rec-blue')+
+      recCard('🏰','Team — Best Month',R.teamMonth.count,R.teamMonth.count?'Whole team':'',R.teamMonth.count?R.teamMonth.month:'record up for grabs','rec-blue');
+  }
+  const yEl=document.getElementById('yearTotal');
+  if(yEl)yEl.textContent=`${yearDeals()} deals`;
+  const ynEl=document.getElementById('yearNum');
+  if(ynEl)ynEl.textContent=new Date().getFullYear();
+  const el=document.getElementById('lb-year');
+  if(el){
+    const sorted=[...db.members].filter(m=>!m.inactive).map(m=>({m,y:repYear(m.id)})).sort((a,b)=>b.y-a.y);
+    let rank=0,last=-1;
+    el.innerHTML=sorted.map((o,i)=>{
+      const t=o.y;if(t!==last){rank=i+1;last=t;}
+      const atCls=rank===1?'at-1':rank===2?'at-2':rank===3?'at-3':'';
+      const p=pr[o.m.id]||{};const bd=(p.bestDay&&p.bestDay.count)||0;const bm=(p.bestMonth&&p.bestMonth.count)||0;
+      const chips=[bd?`<span class="at-chip">🔥 ${bd} best day</span>`:'',bm?`<span class="at-chip">📅 ${bm} best month</span>`:''].join('');
+      return `<div class="alltime-row ${atCls} anim"><div class="at-rank">${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':rank}</div><div class="lb-emoji">${o.m.emoji}</div><div><div class="lb-name">${o.m.name}</div><div class="at-breakdown">${chips||'<span style="color:#374151;font-size:11px">No deals yet</span>'}</div></div><div><div class="at-total ${t===0?'zero-score':''}">${t}</div><div class="at-label">this year</div></div></div>`;
+    }).join('');
+  }
+}
+
 function renderLastUp(){const el=document.getElementById('lastup');if(db.updated){const d=new Date(db.updated);el.textContent=`Updated ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} at ${d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`;}else el.textContent='';}
 
 // ══════════════════ PASSWORD GATE ══════════════════
@@ -314,7 +436,7 @@ function previewPaste(){
 function applyPaste(){
   if(!parsedScores)return;
   Object.entries(parsedScores).forEach(([id,cats])=>{if(!db.scores[id])db.scores[id]={medicare:0,ancillary:0,life:0,uhc:0};Object.entries(cats).forEach(([c,v])=>db.scores[id][c]=v);});
-  db.updated=new Date().toISOString();save();render();closePaste();
+  updateRecords();db.updated=new Date().toISOString();save();render();closePaste();
 }
 
 // ══════════════════ CLOSE MONTH ══════════════════
@@ -385,8 +507,9 @@ function executeCloseMonth(){
   if(relegD1){relegD1.division=2;dn.push({name:relegD1.name,emoji:relegD1.emoji,from:1,to:2});}
   if(relegD2){relegD2.division=3;dn.push({name:relegD2.name,emoji:relegD2.emoji,from:2,to:3});}
 
-  // ── STEP 6: Reset monthly scores ──
+  // ── STEP 6: Reset monthly scores (records persist; only the daily baseline rebaselines next month) ──
   db.members.forEach(m=>{db.scores[m.id]={medicare:0,ancillary:0,life:0,uhc:0};});
+  db.daily=null;
 
   // ── STEP 7: Save history ──
   if(!db.history)db.history=[];
@@ -574,7 +697,7 @@ function saveScores(){
     if(!db.running[m.id])db.running[m.id]={medicare:0,ancillary:0,life:0,uhc:0};
     PRODS.forEach(p=>{const e=document.getElementById(`r_${m.id}_${p.key}`);if(e)db.running[m.id][p.key]=Math.max(0,parseInt(e.value)||0);});
   });
-  db.updated=new Date().toISOString();save();
+  updateRecords();db.updated=new Date().toISOString();save();
   const msg=document.getElementById('saveMsg');msg.className='msg ok';msg.textContent='✅ Saved!';setTimeout(()=>msg.textContent='',2500);render();
 }
 function changePw(){
