@@ -12,7 +12,7 @@ TEAM=$(grep '^VERCEL_TEAM_ID=' .env | cut -d= -f2)
 PROJECT="kingdom-scoreboard"
 
 # Files that make up the deployed site (everything else stays out — see .vercelignore).
-FILES=(index.html app.js config.js lib/cloud.js vercel.json)
+FILES=(index.html app.js config.js lib/cloud.js vercel.json api/deals.js)
 
 echo "Uploading ${#FILES[@]} files…"
 ENTRIES=""
