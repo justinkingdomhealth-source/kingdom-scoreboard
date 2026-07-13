@@ -164,10 +164,11 @@ function cleanBoard(data){
     // deal ledger — client details are ENCRYPTED blobs; sanitize charset but DON'T truncate ciphertext
     const b64s=v=>String(v==null?'':v).replace(/[^A-Za-z0-9+/=_-]/g,'').slice(0,4000);
     const money=v=>{const n=Number(v);return isFinite(n)&&n>=0?Math.round(n*100)/100:0;};
-    if(Array.isArray(data.deals))out.deals=data.deals.slice(0,6000).map(d=>{
+    if(Array.isArray(data.deals))out.deals=data.deals.slice(0,6000).map((d,i)=>{
       if(!d||typeof d!=='object')return null;
       const e=(d.enc&&typeof d.enc==='object')?d.enc:{},ee=(e.e&&typeof e.e==='object')?e.e:{};
-      return {id:str(d.id),agentId:str(d.agentId),product:['ancillary','life','medicare'].includes(d.product)?d.product:'other',date:str(d.date),
+      let id=String(d.id||'');if(!/^[\w-]{1,40}$/.test(id))id='d'+i; // strict id whitelist (ids are ever only 'd'+digits) — blocks handler-injection
+      return {id:id,agentId:str(d.agentId),product:['ancillary','life','medicare'].includes(d.product)?d.product:'other',date:str(d.date),
         enc:{e:{x:b64s(ee.x),y:b64s(ee.y)},iv:b64s(e.iv),ct:b64s(e.ct)}};
     }).filter(Boolean);
     if(data.premiums&&typeof data.premiums==='object'){
@@ -706,8 +707,13 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
 async function unlockLedger(){
   const v=document.getElementById('ledgerKeyInp').value.trim(),msg=document.getElementById('ledgerKeyMsg');
   if(!v){msg.className='msg er';msg.textContent='Paste your admin key.';return;}
-  const sample=(db.deals||[]).find(d=>d.enc&&d.product!=='medicare');
-  if(sample){try{await ledgerDecrypt(sample.enc,v);}catch(e){msg.className='msg er';msg.textContent="That key can't open the deals — double-check it.";return;}}
+  // Accept the key if it opens ANY deal (a single planted/undecryptable deal must not lock you out).
+  const samples=(db.deals||[]).filter(d=>d.enc&&d.product!=='medicare');
+  if(samples.length){
+    let ok=false;
+    for(const d of samples){try{await ledgerDecrypt(d.enc,v);ok=true;break;}catch(e){}}
+    if(!ok){msg.className='msg er';msg.textContent="That key can't open any deals — double-check it.";return;}
+  }
   localStorage.setItem(LEDGER_D_LS,v);
   document.getElementById('ledgerKeyInp').value='';msg.textContent='';
   renderLedger();
@@ -737,7 +743,7 @@ async function renderLedger(){
     if(!det){rows.push(`<div class="ledger-deal"><div class="ledger-locked">🔒 Couldn't unlock this one (wrong key?) · ${prodLabel} · ${who}</div></div>`);continue;}
     rows.push(`<div class="ledger-deal"><div class="ledger-top"><div class="ledger-client">${esc(det.client)||'(no name)'}</div><div class="ledger-prem">${det.premium?fmtMoney(det.premium):''}</div></div>`+
       `<div class="ledger-meta"><span>${prodLabel}</span>${det.carrier?'<span>'+esc(det.carrier)+'</span>':''}${det.effective?'<span>eff '+esc(det.effective)+'</span>':''}<span>${who}</span>`+
-      `<a onclick="deleteDeal('${esc(d.id)}')" style="color:#f87171;cursor:pointer;margin-left:auto">remove</a></div></div>`);
+      `<a class="ledger-rm" data-id="${esc(d.id)}" style="color:#f87171;cursor:pointer;margin-left:auto">remove</a></div></div>`);
   }
   listEl.innerHTML=rows.join('');
 }
@@ -1059,6 +1065,11 @@ document.addEventListener('click',function(e){
   const picker=document.getElementById('emojiPicker');
   const btn=document.getElementById('emojiBtn');
   if(picker&&btn&&!picker.contains(e.target)&&e.target!==btn){picker.classList.remove('open');}
+});
+// Ledger "remove" via delegation — never interpolate a deal id into a handler string
+document.addEventListener('click',function(e){
+  const a=e.target&&e.target.closest&&e.target.closest('.ledger-rm');
+  if(a&&a.dataset&&a.dataset.id)deleteDeal(a.dataset.id);
 });
 
 initFromDrive();
