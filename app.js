@@ -154,8 +154,8 @@ function cleanBoard(data){
       perRep:{}
     };
     if(rec.perRep&&typeof rec.perRep==='object')Object.entries(rec.perRep).slice(0,300).forEach(([k,v])=>{
-      const bd=(v&&v.bestDay)||{},bm=(v&&v.bestMonth)||{};
-      out.records.perRep[str(k)]={bestDay:{count:num(bd.count),date:str(bd.date)},bestMonth:{count:num(bm.count),month:str(bm.month)}};
+      const bd=(v&&v.bestDay)||{},bm=(v&&v.bestMonth)||{},sk=(v&&v.streak)||{};
+      out.records.perRep[str(k)]={bestDay:{count:num(bd.count),date:str(bd.date)},bestMonth:{count:num(bm.count),month:str(bm.month)},streak:{count:num(sk.count),best:num(sk.best)}};
     });
     if(data.daily&&typeof data.daily==='object'){
       const totObj=o=>{const r={};if(o&&typeof o==='object')Object.entries(o).slice(0,300).forEach(([k,v])=>{r[str(k)]=num(v);});return r;};
@@ -184,10 +184,19 @@ window.applyCloudData=function(data){
     window.__cloudRetry=setTimeout(()=>{const p=window.__pendingCloud;window.__pendingCloud=null;if(p)window.applyCloudData(p);},1500);
     return;
   }
+  // Never let a records-less payload (e.g. a device that booted on seed after a failed
+  // cloud pull, then published) wipe an already-established record book / streaks.
+  if(recordsPopulated(db.records)&&!recordsPopulated(clean.records)){clean.records=db.records;clean.daily=db.daily;}
+  const before=hypeSnapshot(db);
   db=clean;
   try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}catch(e){}
   render();
+  // The FIRST cloud update after load is a silent baseline (never celebrate pre-existing
+  // records); genuine later updates celebrate the whole team's phones live.
+  if(window.__cloudSynced)celebrateHype(detectHype(before,hypeSnapshot(db)));
+  window.__cloudSynced=true;
 };
+function recordsPopulated(r){return!!(r&&((r.repDay&&r.repDay.count)||(r.repMonth&&r.repMonth.count)||(r.teamDay&&r.teamDay.count)||(r.teamMonth&&r.teamMonth.count)));}
 function monthTotal(id){const s=db.scores[id]||{};return(s.medicare||0)+(s.ancillary||0)+(s.life||0);}
 function runningTotal(id){const r=db.running?.[id]||{};return(r.medicare||0)+(r.ancillary||0)+(r.life||0);}
 function pScore(id,p){return(db.scores[id]||{})[p]||0;}
@@ -230,7 +239,8 @@ function bumpDaily(){
   if(!db.daily||db.daily.month!==mk){           // new month (or first run): a month starts at 0 deals,
     db.daily={day:today,month:mk,startTotals:{},startTeam:0,lastTotals:cur,lastTeam:curTeam};return; // so day-1 delta = the first cumulative entry
   }
-  if(db.daily.day!==today){                      // new calendar day → yesterday's ending becomes today's baseline
+  if(db.daily.day!==today){                      // new calendar day → score the day that just ended, then rebaseline
+    finalizeStreaks();
     db.daily.day=today;
     db.daily.startTotals=Object.assign({},db.daily.lastTotals);
     db.daily.startTeam=db.daily.lastTeam;
@@ -259,6 +269,98 @@ function updateRecords(){
   if(tm>R.teamMonth.count)R.teamMonth={count:tm,month:mk};
 }
 
+// ══════════════════ 🔥 STREAKS ══════════════════
+// A rep's streak = consecutive tracked days on which they booked ≥1 deal. When a
+// day rolls over (see bumpDaily) that day is "complete", so we score it: gained →
+// streak++, blanked → streak resets. Lives in records.perRep[id].streak.
+function finalizeStreaks(){
+  if(!db.records)db.records=defaultRecords();if(!db.records.perRep)db.records.perRep={};
+  const st=db.daily.startTotals||{},en=db.daily.lastTotals||{};
+  db.members.forEach(m=>{
+    const gain=(en[m.id]||0)-(st[m.id]||0);
+    const pr=db.records.perRep[m.id]||(db.records.perRep[m.id]={bestDay:{count:0,date:''},bestMonth:{count:0,month:''}});
+    if(!pr.streak)pr.streak={count:0,best:0};
+    pr.streak.count=gain>0?pr.streak.count+1:0;
+    if(pr.streak.count>pr.streak.best)pr.streak.best=pr.streak.count;
+  });
+}
+function streakOf(id){const pr=db.records&&db.records.perRep&&db.records.perRep[id];return(pr&&pr.streak&&pr.streak.count)||0;}
+function streakBadge(id){const s=streakOf(id);return s>=2?`<span class="streak-badge" title="on a ${s}-day hot streak">🔥${s}</span>`:'';}
+
+// ══════════════════ ⚡ TODAY'S MOVERS ══════════════════
+// Who gained deals since the start of today (only when today's baseline is live).
+function moversToday(){
+  if(!db.daily||db.daily.day!==todayStr())return[];
+  const st=db.daily.startTotals||{};
+  return db.members.filter(m=>!m.inactive&&!m.hiddenFromBoard)
+    .map(m=>({m,d:monthTotal(m.id)-(st[m.id]||0)})).filter(x=>x.d>0).sort((a,b)=>b.d-a.d);
+}
+function renderMovers(){
+  const el=document.getElementById('moversStrip');if(!el)return;
+  const mv=moversToday();
+  if(!mv.length){el.style.display='none';el.innerHTML='';return;}
+  el.style.display='';
+  el.innerHTML=`<span class="mv-lbl">⚡ On fire today</span>`+
+    mv.slice(0,6).map(x=>`<span class="mv-chip">${x.m.emoji} ${x.m.name} <b>+${x.d}</b></span>`).join('');
+}
+
+// ══════════════════ 🎉 HYPE ENGINE (confetti + toasts) ══════════════════
+const MILESTONES=[10,25,50,75,100];
+function hypeSnapshot(d){
+  const R=(d&&d.records)||defaultRecords();
+  const snap={records:JSON.parse(JSON.stringify(R)),reps:{}};
+  (d&&d.members||[]).forEach(m=>{const s=(d.scores&&d.scores[m.id])||{};const pr=R.perRep&&R.perRep[m.id];
+    snap.reps[m.id]={name:m.name,emoji:m.emoji,month:(s.medicare||0)+(s.ancillary||0)+(s.life||0),streak:(pr&&pr.streak&&pr.streak.count)||0};});
+  return snap;
+}
+function detectHype(before,after){
+  if(!before||!after)return[];
+  const ev=[],B=before.records,A=after.records;
+  // A record celebration fires only when a PRIOR record is genuinely broken by a new
+  // holder/period — not on every increment past it (that would spam confetti all month),
+  // and not when the first-ever record is merely established (B.count===0).
+  if(B.repDay.count>0&&A.repDay.count>B.repDay.count&&(A.repDay.id!==B.repDay.id||A.repDay.date!==B.repDay.date))ev.push({big:true,text:`🔥 NEW RECORD — ${A.repDay.emoji} ${A.repDay.name} booked ${A.repDay.count} in one day!`});
+  if(B.repMonth.count>0&&A.repMonth.count>B.repMonth.count&&(A.repMonth.id!==B.repMonth.id||A.repMonth.month!==B.repMonth.month))ev.push({big:true,text:`📅 NEW RECORD — ${A.repMonth.emoji} ${A.repMonth.name}: ${A.repMonth.count} this month!`});
+  if(B.teamMonth.count>0&&A.teamMonth.count>B.teamMonth.count&&A.teamMonth.month!==B.teamMonth.month)ev.push({big:true,text:`🏰 TEAM RECORD — ${A.teamMonth.count} deals in a month!`});
+  if(B.teamDay.count>0&&A.teamDay.count>B.teamDay.count&&A.teamDay.date!==B.teamDay.date)ev.push({text:`👥 Team's best day yet — ${A.teamDay.count} deals!`});
+  Object.keys(after.reps).forEach(id=>{
+    const bR=before.reps[id]||{month:0,streak:0},aR=after.reps[id];
+    MILESTONES.forEach(t=>{if((bR.month||0)<t&&aR.month>=t)ev.push({big:t>=50,text:`🎉 ${aR.emoji} ${aR.name} hit ${t} deals this month!`});});
+    [3,5,7,10,14].forEach(t=>{if((bR.streak||0)<t&&aR.streak>=t)ev.push({text:`🔥 ${aR.emoji} ${aR.name} is on a ${t}-day streak!`});});
+  });
+  return ev;
+}
+function reducedMotion(){try{return matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){return false;}}
+function celebrateHype(events){
+  if(!events||!events.length)return;
+  if(!reducedMotion())fireConfetti(events.some(e=>e.big)?170:90);
+  showHypeToasts(events);
+}
+var _confettiRAF=null;
+function fireConfetti(n){
+  const cv=document.getElementById('hypeCanvas');if(!cv)return;
+  if(_confettiRAF)cancelAnimationFrame(_confettiRAF); // don't stack overlapping bursts on the shared canvas
+  const ctx=cv.getContext('2d');const W=cv.width=innerWidth,H=cv.height=innerHeight;
+  const colors=['#f7e98e','#d4af37','#b8941f','#ffffff','#8fa8c8'];
+  const parts=[];for(let i=0;i<n;i++)parts.push({x:Math.random()*W,y:-20-Math.random()*H*0.4,r:4+Math.random()*6,c:colors[i%colors.length],vy:2.2+Math.random()*3.2,vx:-1.6+Math.random()*3.2,rot:Math.random()*6.3,vr:-0.25+Math.random()*0.5,sh:Math.random()<0.5?'r':'c'});
+  cv.style.opacity='1';let t=0;
+  (function frame(){ctx.clearRect(0,0,W,H);t++;let alive=false;
+    for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.vy+=0.045;p.rot+=p.vr;if(p.y<H+24)alive=true;
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.globalAlpha=Math.max(0,1-t/230);ctx.fillStyle=p.c;
+      if(p.sh==='r')ctx.fillRect(-p.r/2,-p.r/2,p.r,p.r*0.62);else{ctx.beginPath();ctx.arc(0,0,p.r/2,0,7);ctx.fill();}
+      ctx.restore();}
+    if(alive&&t<250)_confettiRAF=requestAnimationFrame(frame);else{_confettiRAF=null;cv.style.opacity='0';}
+  })();
+}
+function showHypeToasts(events){
+  const wrap=document.getElementById('hypeToasts');if(!wrap)return;
+  events.slice(0,4).forEach((e,i)=>setTimeout(()=>{
+    const t=document.createElement('div');t.className='hype-toast'+(e.big?' big':'');t.textContent=e.text;
+    wrap.appendChild(t);requestAnimationFrame(()=>t.classList.add('show'));
+    setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),420);},4200+i*250);
+  },i*350));
+}
+
 // ── STARS ──
 (()=>{
   const el=document.getElementById('stars');
@@ -276,7 +378,7 @@ function setTab(btn){
 }
 
 // ── RENDER ──
-function render(){renderTotal();PRODS.forEach(p=>renderProd(p.key));renderAllTime();renderRecords();renderLastUp();}
+function render(){renderMovers();renderTotal();PRODS.forEach(p=>renderProd(p.key));renderAllTime();renderRecords();renderLastUp();}
 
 function divM(div){return db.members.filter(m=>m.division==div && !m.inactive && !m.hiddenFromBoard).sort((a,b)=>monthTotal(b.id)-monthTotal(a.id));}
 
@@ -306,14 +408,14 @@ function buildPodium(ms,relId,lastIsPodium){
   let h='<div class="podium">';
   disp.forEach((m,i)=>{
     if(!m)return;const t=monthTotal(m.id),isR=lastIsPodium&&m.id===relId;const ch=db.champs[m.id]||{};
-    h+=`<div class="pslot ${cls[i]}${isR?' p-relegate':''}"><div class="pperson"><div class="pmedal">${med[i]}</div><div class="pemoji">${m.emoji}</div><div class="pname">${m.name}</div><div style="min-height:16px;display:flex;gap:4px;flex-wrap:wrap;justify-content:center">${champBadges(ch)}</div><div class="pscore">${t}</div><div class="punit">this month</div>${isR?'<div style="font-size:11px;color:#f87171;margin-top:2px">⬇️ danger zone</div>':''}</div><div class="pstep"></div></div>`;
+    h+=`<div class="pslot ${cls[i]}${isR?' p-relegate':''}"><div class="pperson"><div class="pmedal">${med[i]}</div><div class="pemoji">${m.emoji}</div><div class="pname">${m.name}</div><div style="min-height:16px;display:flex;gap:4px;flex-wrap:wrap;justify-content:center">${streakBadge(m.id)}${champBadges(ch)}</div><div class="pscore">${t}</div><div class="punit">this month</div>${isR?'<div style="font-size:11px;color:#f87171;margin-top:2px">⬇️ danger zone</div>':''}</div><div class="pstep"></div></div>`;
   });
   return h+'</div>';
 }
 
 function buildDRow(m,rank,div,isP,isR){
   const t=monthTotal(m.id),ch=db.champs[m.id]||{};
-  return `<div class="drow${isP?' promo':''}${isR?' relegate':''}"><div class="drow-rank">${rank}</div><div class="drow-emoji">${m.emoji}</div><div class="drow-info"><div class="drow-name">${m.name}</div><div class="drow-badges">${champBadges(ch)}</div></div>${isP?'<div class="zone-arrow">⬆️</div>':''}${isR?'<div class="zone-arrow">⬇️</div>':''}<div><div class="drow-score">${t}</div><div class="drow-unit">this month</div></div></div>`;
+  return `<div class="drow${isP?' promo':''}${isR?' relegate':''}"><div class="drow-rank">${rank}</div><div class="drow-emoji">${m.emoji}</div><div class="drow-info"><div class="drow-name">${m.name}</div><div class="drow-badges">${streakBadge(m.id)}${champBadges(ch)}</div></div>${isP?'<div class="zone-arrow">⬆️</div>':''}${isR?'<div class="zone-arrow">⬇️</div>':''}<div><div class="drow-score">${t}</div><div class="drow-unit">this month</div></div></div>`;
 }
 
 function renderProd(prod){
@@ -375,6 +477,14 @@ function renderRecords(){
       return `<div class="alltime-row ${atCls} anim"><div class="at-rank">${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':rank}</div><div class="lb-emoji">${o.m.emoji}</div><div><div class="lb-name">${o.m.name}</div><div class="at-breakdown">${chips||'<span style="color:#374151;font-size:11px">No deals yet</span>'}</div></div><div><div class="at-total ${t===0?'zero-score':''}">${t}</div><div class="at-label">this year</div></div></div>`;
     }).join('');
   }
+  const sEl=document.getElementById('lb-streaks');
+  if(sEl){
+    const hot=[...db.members].filter(m=>!m.inactive&&!m.hiddenFromBoard).map(m=>{
+      const s=(pr[m.id]&&pr[m.id].streak)||{};return{m,cur:s.count||0,best:s.best||0};
+    }).filter(x=>x.cur>0||x.best>0).sort((a,b)=>b.cur-a.cur||b.best-a.best);
+    if(!hot.length)sEl.innerHTML='<div class="streak-empty">🔥 No streaks going yet — book a deal today to light one up.</div>';
+    else sEl.innerHTML=hot.map(x=>`<div class="streak-row"><div class="lb-emoji">${x.m.emoji}</div><div style="flex:1;min-width:0"><div class="lb-name">${x.m.name}</div><div class="streak-best">best run: ${x.best} day${x.best===1?'':'s'}</div></div><div class="streak-flames">${x.cur>0?'🔥'.repeat(Math.min(x.cur,5)):''}</div><div class="streak-count ${x.cur>0?'':'zero-score'}">${x.cur}<span class="streak-unit">day${x.cur===1?'':'s'} 🔥</span></div></div>`).join('');
+  }
 }
 
 function renderLastUp(){const el=document.getElementById('lastup');if(db.updated){const d=new Date(db.updated);el.textContent=`Updated ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} at ${d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`;}else el.textContent='';}
@@ -435,8 +545,10 @@ function previewPaste(){
 }
 function applyPaste(){
   if(!parsedScores)return;
+  const before=hypeSnapshot(db);
   Object.entries(parsedScores).forEach(([id,cats])=>{if(!db.scores[id])db.scores[id]={medicare:0,ancillary:0,life:0,uhc:0};Object.entries(cats).forEach(([c,v])=>db.scores[id][c]=v);});
   updateRecords();db.updated=new Date().toISOString();save();render();closePaste();
+  celebrateHype(detectHype(before,hypeSnapshot(db)));
 }
 
 // ══════════════════ CLOSE MONTH ══════════════════
@@ -690,6 +802,7 @@ function deleteMemberForever(id){
 }
 function movDiv(id,div){const m=db.members.find(x=>x.id===id);if(m){m.division=parseInt(div);save();render();}}
 function saveScores(){
+  const before=hypeSnapshot(db);
   if(!db.running)db.running={};
   db.members.forEach(m=>{
     if(!db.scores[m.id])db.scores[m.id]={};
@@ -699,6 +812,7 @@ function saveScores(){
   });
   updateRecords();db.updated=new Date().toISOString();save();
   const msg=document.getElementById('saveMsg');msg.className='msg ok';msg.textContent='✅ Saved!';setTimeout(()=>msg.textContent='',2500);render();
+  celebrateHype(detectHype(before,hypeSnapshot(db)));
 }
 function changePw(){
   const pw=document.getElementById('nPw').value.trim();const msg=document.getElementById('pwChMsg');

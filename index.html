@@ -389,6 +389,31 @@ body::before{
 .year-total{font-family:var(--serif);font-size:30px;font-weight:900;color:var(--gold);line-height:1;text-shadow:0 0 20px rgba(212,175,55,.5);flex-shrink:0}
 @media (max-width:460px){.rec-grid{grid-template-columns:1fr}.rec-num{font-size:26px}}
 
+/* ═══════════════ ⚡ TODAY'S MOVERS STRIP ═══════════════ */
+.movers-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 14px;margin-bottom:16px;border-radius:14px;border:1px solid rgba(212,175,55,.28);background:linear-gradient(90deg,rgba(212,175,55,.12),rgba(10,14,34,.35));box-shadow:inset 0 1px 0 rgba(247,233,142,.12);animation:fadeUp .3s ease both}
+.mv-lbl{font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--gold);white-space:nowrap;padding-right:2px}
+.mv-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#e5e7eb;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(212,175,55,.22)}
+.mv-chip b{color:#22c55e;font-weight:900}
+
+/* ═══════════════ 🔥 STREAKS ═══════════════ */
+.streak-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:900;padding:2px 6px;border-radius:8px;color:#ffb057;background:rgba(249,115,22,.16);border:1px solid rgba(249,115,22,.4);line-height:1;box-shadow:0 0 10px rgba(249,115,22,.25)}
+.streak-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:14px;border:1px solid rgba(249,115,22,.16);background:linear-gradient(90deg,rgba(249,115,22,.07),rgba(10,14,34,.35));margin-bottom:8px}
+.streak-best{font-size:11px;color:#6b7280;margin-top:2px}
+.streak-flames{font-size:15px;letter-spacing:-2px;flex-shrink:0;filter:drop-shadow(0 0 6px rgba(249,115,22,.5))}
+.streak-count{font-family:var(--serif);font-size:22px;font-weight:900;color:#ffb057;line-height:1;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;text-shadow:0 0 14px rgba(249,115,22,.4)}
+.streak-count.zero-score{color:#374151 !important;text-shadow:none !important}
+.streak-unit{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
+.streak-empty{text-align:center;color:#6b7280;font-size:13px;padding:18px;border:1px dashed rgba(249,115,22,.25);border-radius:14px}
+
+/* ═══════════════ 🎉 HYPE: CONFETTI + TOASTS ═══════════════ */
+#hypeCanvas{position:fixed;inset:0;width:100vw;height:100vh;z-index:400;pointer-events:none;opacity:0;transition:opacity .4s ease}
+#hypeToasts{position:fixed;left:0;right:0;top:14px;z-index:401;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:0 12px}
+.hype-toast{max-width:440px;width:auto;pointer-events:none;font-size:13.5px;font-weight:800;color:#1a1305;text-align:center;padding:11px 18px;border-radius:14px;background:linear-gradient(180deg,#f7e98e,#d4af37 60%,#b8941f);border:1px solid rgba(255,246,200,.7);box-shadow:0 12px 30px -8px rgba(212,175,55,.6),inset 0 1px 0 rgba(255,255,255,.6);opacity:0;transform:translateY(-16px) scale(.96);transition:opacity .35s ease,transform .35s cubic-bezier(.2,.8,.3,1)}
+.hype-toast.show{opacity:1;transform:translateY(0) scale(1)}
+.hype-toast.big{font-size:15px;padding:13px 22px;box-shadow:0 16px 40px -8px rgba(212,175,55,.75),inset 0 1px 0 rgba(255,255,255,.6);animation:hypePulse 1.1s ease-in-out infinite}
+@keyframes hypePulse{0%,100%{box-shadow:0 16px 40px -8px rgba(212,175,55,.75),inset 0 1px 0 rgba(255,255,255,.6)}50%{box-shadow:0 16px 52px -6px rgba(247,233,142,.95),inset 0 1px 0 rgba(255,255,255,.7)}}
+@media (prefers-reduced-motion:reduce){.hype-toast.big{animation:none}}
+
 /* ═══════════════ FOOTER ═══════════════ */
 .footer{position:relative;display:flex;align-items:center;justify-content:center;padding-top:18px;border-top:1px solid var(--hairline);margin-top:10px}
 .footer::before{content:'';position:absolute;top:-1px;left:50%;transform:translateX(-50%);width:170px;height:1px;background:linear-gradient(90deg,transparent,rgba(212,175,55,.65),transparent)}
@@ -627,7 +652,7 @@ select.inp{cursor:pointer}
     <button class="tab"        data-view="records"   onclick="setTab(this)">🏅 Records</button>
   </div>
 
-  <div class="view active" id="view-total"><div class="divisions" id="div-sections"></div></div>
+  <div class="view active" id="view-total"><div class="movers-strip" id="moversStrip" style="display:none"></div><div class="divisions" id="div-sections"></div></div>
 
   <div class="view" id="view-medicare">
     <div class="prod-header"><div class="prod-icon">🏥</div><div><div class="prod-title">Medicare Policies</div><div class="prod-sub">This month · ranked by policies sold</div></div></div>
@@ -650,6 +675,8 @@ select.inp{cursor:pointer}
     <div id="records-cards" class="rec-grid"></div>
     <div class="year-hd"><div class="year-hd-l"><span class="year-ic">📆</span><div><div class="year-title">This Year</div><div class="year-sub">Deals booked in <span id="yearNum"></span> · team + closed months</div></div></div><div class="year-total" id="yearTotal">0 deals</div></div>
     <div id="lb-year"></div>
+    <div class="prod-header" style="margin-top:26px"><div class="prod-icon">🔥</div><div><div class="prod-title">Hot Streaks</div><div class="prod-sub">Keep booking every day to keep your fire alive 🔥</div></div></div>
+    <div id="lb-streaks"></div>
   </div>
 
   <div class="footer"><span class="lastup" id="lastup"></span></div>
@@ -759,6 +786,10 @@ select.inp{cursor:pointer}
     <div class="msg" id="pwChMsg"></div>
   </div>
 </div>
+<!-- 🎉 Hype overlays: confetti canvas + celebration toasts (fixed, above everything) -->
+<canvas id="hypeCanvas"></canvas>
+<div id="hypeToasts"></div>
+
 <!-- Public config: Supabase keys (safe to expose to the browser). Empty = local-only. -->
 <script src="config.js"></script>
 <!-- Cloud bootstrap: pulls the shared team board from Supabase (if configured), then loads app.js -->
