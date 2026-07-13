@@ -612,6 +612,19 @@ select.inp{cursor:pointer}
 .epick{font-size:22px;cursor:pointer;padding:4px;border-radius:8px;transition:background .15s;line-height:1}
 .epick:hover{background:rgba(212,175,55,.2)}
 .epick-selected{background:rgba(212,175,55,.3);outline:2px solid rgba(212,175,55,.6)}
+
+/* ═══════════════ ➕ LOG A SALE ═══════════════ */
+.abtn-logsale{background:linear-gradient(135deg,#f7e98e,#d4af37 55%,#b8941f);color:#1a1305;border:1px solid rgba(255,246,200,.7);box-shadow:0 4px 16px -4px rgba(212,175,55,.55),inset 0 1px 0 rgba(255,255,255,.6);animation:saleGlow 2.4s ease-in-out infinite}
+.abtn-logsale:hover{transform:translateY(-1px);box-shadow:0 8px 22px -4px rgba(212,175,55,.7),inset 0 1px 0 rgba(255,255,255,.7)}
+@keyframes saleGlow{0%,100%{box-shadow:0 4px 16px -4px rgba(212,175,55,.5),inset 0 1px 0 rgba(255,255,255,.6)}50%{box-shadow:0 4px 22px -2px rgba(247,233,142,.85),inset 0 1px 0 rgba(255,255,255,.7)}}
+.sale-btns{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+.sale-btn{display:flex;flex-direction:column;align-items:center;gap:7px;padding:18px 8px;border-radius:14px;border:1px solid rgba(212,175,55,.3);background:linear-gradient(180deg,rgba(212,175,55,.1),rgba(10,14,34,.4));color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:transform .14s ease,border-color .14s ease,box-shadow .14s ease}
+.sale-btn:hover{border-color:rgba(212,175,55,.6);transform:translateY(-2px);box-shadow:0 10px 24px -12px rgba(212,175,55,.6)}
+.sale-btn:active{transform:translateY(0) scale(.97)}
+.sale-ic{font-size:28px;line-height:1;filter:drop-shadow(0 2px 5px rgba(0,0,0,.45))}
+.log-recent{margin-top:10px}
+.log-recent-item{font-size:12.5px;color:#9ca3af;padding:6px 2px;border-top:1px solid rgba(255,255,255,.05);display:flex;align-items:center;gap:6px}
+@media (prefers-reduced-motion:reduce){.abtn-logsale{animation:none}}
 </style>
 </head>
 <body>
@@ -634,11 +647,11 @@ select.inp{cursor:pointer}
   </div>
 
   <div class="action-bar">
-    <button class="abtn abtn-gold"  onclick="openGate('paste')">📋 Paste from GroupMe</button>
-    <button class="abtn abtn-green" onclick="openGate('cm')">🏁 Close Month</button>
+    <button class="abtn abtn-logsale" onclick="openLogSale()">➕ Log a Sale</button>
     <button class="abtn abtn-blue"  onclick="openHistory()">📅 View History</button>
+    <button class="abtn abtn-ghost" onclick="openGate('cm')">🏁 Close Month</button>
     <button class="abtn abtn-ghost" onclick="openGate('admin')">⚙️ Manage Team</button>
-    <button class="abtn abtn-green" id="pubBtn" onclick="openGate('publish')">📢 Publish to Team</button>
+    <button class="abtn abtn-ghost" onclick="openGate('paste')">📋 Bulk paste</button>
   </div>
 
   <div class="month-badge"><span class="month-pill" id="monthBadge"></span></div>
@@ -680,6 +693,26 @@ select.inp{cursor:pointer}
   </div>
 
   <div class="footer"><span class="lastup" id="lastup"></span></div>
+</div>
+
+<!-- LOG A SALE (open — no admin password; reps log their own sales in real time) -->
+<div class="overlay hidden" id="logOvr">
+  <div class="modal" style="max-width:460px">
+    <div class="mtitle">➕ Log a Sale</div>
+    <label class="lbl">Who made the sale?</label>
+    <select class="inp" id="logRep" onchange="rememberLogRep()"></select>
+    <label class="lbl" style="margin-top:16px">What did they sell? &nbsp;<span style="color:#6b7280;text-transform:none;letter-spacing:0;font-weight:400">tap to log +1</span></label>
+    <div class="sale-btns">
+      <button class="sale-btn" onclick="logSale('medicare')"><span class="sale-ic">🏥</span>Medicare</button>
+      <button class="sale-btn" onclick="logSale('ancillary')"><span class="sale-ic">➕</span>Ancillary</button>
+      <button class="sale-btn" onclick="logSale('life')"><span class="sale-ic">🌿</span>Life Ins.</button>
+    </div>
+    <div class="msg" id="logMsg" style="min-height:20px"></div>
+    <div id="logRecent"></div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button class="btn bghost" onclick="closeLogSale()">Done</button>
+    </div>
+  </div>
 </div>
 
 <!-- PASSWORD GATE -->

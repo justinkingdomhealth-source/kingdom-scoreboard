@@ -551,6 +551,50 @@ function applyPaste(){
   celebrateHype(detectHype(before,hypeSnapshot(db)));
 }
 
+// ══════════════════ ➕ LOG A SALE (self-serve, real-time) ══════════════════
+// No admin password — any rep taps their name (remembered on their phone) and a
+// product to log +1. Reuses the exact save/records/hype pipeline, so it syncs live
+// to everyone and fires records/streaks/confetti just like a paste would.
+const ME_KEY='khg_me';
+let _lastSale=null;
+function saleMembers(){return db.members.filter(m=>!m.inactive&&!m.hiddenFromBoard).sort((a,b)=>a.division-b.division||a.name.localeCompare(b.name));}
+function openLogSale(){
+  const sel=document.getElementById('logRep'),me=localStorage.getItem(ME_KEY)||'',list=saleMembers();
+  sel.innerHTML=list.map(m=>`<option value="${m.id}"${m.id===me?' selected':''}>${m.emoji} ${m.name}</option>`).join('');
+  const msg=document.getElementById('logMsg');
+  if(!list.length){msg.className='msg er';msg.textContent='Add team members first (⚙️ Manage Team).';}else{msg.textContent='';}
+  document.getElementById('logRecent').innerHTML='';_lastSale=null;
+  document.getElementById('logOvr').classList.remove('hidden');
+}
+function closeLogSale(){document.getElementById('logOvr').classList.add('hidden');}
+function rememberLogRep(){const v=document.getElementById('logRep').value;if(v)localStorage.setItem(ME_KEY,v);}
+function logSale(product){
+  const sel=document.getElementById('logRep'),id=sel&&sel.value,m=db.members.find(x=>x.id===id);
+  const msg=document.getElementById('logMsg');
+  if(!m){msg.className='msg er';msg.textContent='Pick who made the sale first.';return;}
+  localStorage.setItem(ME_KEY,id);
+  const before=hypeSnapshot(db);
+  if(!db.scores[id])db.scores[id]={medicare:0,ancillary:0,life:0,uhc:0};
+  db.scores[id][product]=(db.scores[id][product]||0)+1;
+  _lastSale={id,product};
+  updateRecords();db.updated=new Date().toISOString();save();render();
+  celebrateHype(detectHype(before,hypeSnapshot(db)));
+  const label=(PRODS.find(p=>p.key===product)||{}).label||product;
+  msg.className='msg ok';
+  msg.innerHTML=`✅ ${m.emoji} <strong>${m.name}</strong> +1 ${label} · now <strong>${monthTotal(id)}</strong> this month &nbsp;<a onclick="undoLastSale()" style="color:#f87171;cursor:pointer;text-decoration:underline">undo</a>`;
+  const rec=document.getElementById('logRecent');
+  if(rec)rec.insertAdjacentHTML('afterbegin',`<div class="log-recent-item">${m.emoji} ${m.name} · +1 ${label}</div>`);
+}
+function undoLastSale(){
+  if(!_lastSale)return;
+  const {id,product}=_lastSale;_lastSale=null;
+  if(db.scores[id])db.scores[id][product]=Math.max(0,(db.scores[id][product]||0)-1);
+  updateRecords();db.updated=new Date().toISOString();save();render();
+  const m=db.members.find(x=>x.id===id),label=(PRODS.find(p=>p.key===product)||{}).label||product;
+  const msg=document.getElementById('logMsg');msg.className='msg';
+  msg.innerHTML=`↩ Undone — ${m?m.emoji+' '+m.name:''} ${label} back to <strong>${(db.scores[id]||{})[product]||0}</strong>.`;
+}
+
 // ══════════════════ CLOSE MONTH ══════════════════
 function openCM(){
   const month=new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
