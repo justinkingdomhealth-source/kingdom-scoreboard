@@ -505,7 +505,8 @@ function openGate(action){
 }
 function closeGate(){document.getElementById('pwOvr').classList.add('hidden');pendingAction=null;}
 function checkPw(){
-  if(document.getElementById('pwInp').value===db.pw){
+  // Forgiving on phones: ignore capitalization and stray spaces (keyboards autocapitalize).
+  if(document.getElementById('pwInp').value.trim().toLowerCase()===String(db.pw||'').trim().toLowerCase()){
     document.getElementById('pwOvr').classList.add('hidden');
     if(pendingAction==='paste')openPaste();
     else if(pendingAction==='cm')openCM();
